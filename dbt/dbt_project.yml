@@ -1,0 +1,41 @@
+name: 'fhir_omop'
+version: '1.0.0'
+config-version: 2
+
+profile: 'fhir_omop_databricks'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+docs-paths: ["docs"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  fhir_omop:
+    bronze:
+      +materialized: view
+      +tags: ["bronze", "fhir"]
+    silver:
+      +materialized: incremental
+      +incremental_strategy: merge
+      +file_format: delta
+      +tags: ["silver", "fhir"]
+    gold:
+      +materialized: incremental
+      +incremental_strategy: merge
+      +file_format: delta
+      +tags: ["gold", "omop"]
+
+vars:
+  catalog: "health_lh"
+  bronze_schema: "fhir_bronze"
+  silver_schema: "fhir_silver"
+  gold_schema: "omop_gold"
+  # OMOP concept_ids for visit types
+  visit_inpatient_concept_id: 9201
+  visit_outpatient_concept_id: 9202
+  visit_er_concept_id: 9203
+  # ABDM system URLs
+  abha_id_system: "https://healthid.ndhm.gov.in"
+  hfr_system: "https://facility.ndhm.gov.in"

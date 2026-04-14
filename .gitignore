@@ -1,0 +1,27 @@
+# Synthea-generated FHIR bundles (large, regenerable)
+data/synthea/
+data/vocabularies/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/.user.yml
+
+# Databricks / Spark
+*.egg-info/
+.databricks/
+spark-warehouse/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
