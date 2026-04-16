@@ -36,8 +36,6 @@ BRONZE_SCHEMA = "fhir_bronze"
 VOLUME_PATH   = "/Volumes/workspace/fhir_bronze/synthea_raw/"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{BRONZE_SCHEMA}")
-# Drop and recreate for a clean, idempotent load
-spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
 
 # COMMAND ----------
 # MAGIC %md
@@ -51,18 +49,13 @@ spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
 # COMMAND ----------
 raw_bundles = (
     spark.read
-         # wholetext=true reads each FILE as one row, not each line.
-         # Without this, a pretty-printed JSON file produces thousands of
-         # partial-JSON rows that the UDF cannot parse.
-         .option("wholetext", "true")
+         .option("wholetext", "true")  # one row per file, not per line
          .text(VOLUME_PATH)
          .withColumn("_source_file", F.col("_metadata.file_path"))
          .withColumn("_loaded_at", F.current_timestamp())
          .withColumn("_content_hash", F.sha2(F.col("value"), 256))
          .withColumnRenamed("value", "bundle_json")
 )
-
-print(f"Files read: {raw_bundles.count():,}")
 
 # COMMAND ----------
 # MAGIC %md
@@ -111,7 +104,6 @@ def explode_bundle(bundle_json):
             continue
         resource_type = resource.get("resourceType")
         if not resource_type:
-            # Skip entries with missing/null resourceType — unroutable in Silver
             continue
         results.append({
             "resource_json":    json.dumps(resource, separators=(",", ":")),
@@ -156,19 +148,19 @@ bronze_resources = (
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 4: Write to Bronze Delta (append-only)
+# MAGIC ## Step 4: Write to Bronze Delta
 # MAGIC
-# MAGIC Bronze is intentionally append-only — duplicates are allowed here.
-# MAGIC Idempotency is enforced in Silver via MERGE on `_lineage_id`.
-# MAGIC
-# MAGIC We DROP TABLE at the top of this notebook so re-runs are safe.
+# MAGIC `overwrite` mode atomically replaces the table on each run — idempotent
+# MAGIC without needing a separate DROP TABLE. `overwriteSchema=true` allows
+# MAGIC schema evolution if the notebook is updated.
 
 # COMMAND ----------
 (
     bronze_resources
     .write
     .format("delta")
-    .mode("append")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
     .saveAsTable(f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
 )
 print("Bronze write complete.")
@@ -215,21 +207,21 @@ display(
 
 # COMMAND ----------
 bronze = spark.table(f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
-total = bronze.count()
 
-null_counts = bronze.select(
+stats = bronze.select(
+    F.count("*").alias("total"),
     F.sum(F.col("resource_type").isNull().cast("int")).alias("null_resource_type"),
     F.sum(F.col("fhir_resource_id").isNull().cast("int")).alias("null_fhir_resource_id"),
     F.sum(F.col("_lineage_id").isNull().cast("int")).alias("null_lineage_id"),
 ).collect()[0]
 
-print(f"Total rows            : {total:,}")
-print(f"Null resource_type    : {null_counts['null_resource_type']}")
-print(f"Null fhir_resource_id : {null_counts['null_fhir_resource_id']}")
-print(f"Null _lineage_id      : {null_counts['null_lineage_id']}")
+print(f"Total rows            : {stats['total']:,}")
+print(f"Null resource_type    : {stats['null_resource_type']}")
+print(f"Null fhir_resource_id : {stats['null_fhir_resource_id']}")
+print(f"Null _lineage_id      : {stats['null_lineage_id']}")
 
-assert null_counts["null_resource_type"] == 0, "Malformed entries — check bundle source"
-assert null_counts["null_lineage_id"]    == 0, "Lineage spine broken — cannot proceed to Silver"
+assert stats["null_resource_type"] == 0, "Malformed entries — check bundle source"
+assert stats["null_lineage_id"]    == 0, "Lineage spine broken — cannot proceed to Silver"
 print("All checks passed.")
 
 # COMMAND ----------
