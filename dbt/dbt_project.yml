@@ -28,7 +28,7 @@ models:
       +tags: ["gold", "omop"]
 
 vars:
-  catalog: "health_lh"
+  catalog: "workspace"
   bronze_schema: "fhir_bronze"
   silver_schema: "fhir_silver"
   gold_schema: "omop_gold"

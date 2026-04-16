@@ -1,6 +1,6 @@
 -- models/silver/stg_fhir_observation.sql
 -- Flatten FHIR Observation → Silver
--- Input:  health_lh.fhir_bronze.raw_bundles WHERE resource_type = 'Observation'
+-- Input:  workspace.fhir_bronze.raw_bundles WHERE resource_type = 'Observation'
 -- Output: One row per observation; all value[x] types preserved for Gold routing
 
 {{ config(

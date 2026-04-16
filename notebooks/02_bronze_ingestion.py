@@ -3,17 +3,22 @@
 # MAGIC # Step 2: Bronze Ingestion — FHIR Bundles → Delta Lake
 # MAGIC **Phase 1 | Learning Step 2 of 19**
 # MAGIC
-# MAGIC **What this does:** Reads Synthea-generated FHIR R4 JSON bundles from S3,
-# MAGIC explodes individual resources out of each Bundle, and lands them into a
+# MAGIC **What this does:** Reads Synthea-generated FHIR R4 JSON bundles from a Unity Catalog
+# MAGIC Volume, explodes individual resources out of each Bundle, and lands them into a
 # MAGIC Bronze Delta table with full audit metadata.
 # MAGIC
-# MAGIC **Stack:** Auto Loader (cloudFiles) + Delta Lake
+# MAGIC **Stack:** spark.read.text (batch) + Delta Lake
 # MAGIC
 # MAGIC **Key concepts:**
 # MAGIC - FHIR Bundle structure: `{ "resourceType": "Bundle", "entry": [ { "resource": {...} }, ... ] }`
 # MAGIC - Why Bronze is append-only: deduplication and schema enforcement happen in Silver
 # MAGIC - `_lineage_id`: deterministic SHA-256 spine for cross-layer traceability
 # MAGIC - `_content_hash`: SHA-256 of raw bundle for audit integrity
+# MAGIC
+# MAGIC **Note on batch vs streaming:** We use `spark.read.text` (batch) instead of Auto Loader
+# MAGIC (streaming) because this is a static, one-time load of synthetic data. For a production
+# MAGIC pipeline ingesting files continuously from S3, you would switch to `spark.readStream`
+# MAGIC with `cloudFiles` format and `trigger(availableNow=True)`.
 
 # COMMAND ----------
 # MAGIC %pip install --quiet fhir.resources
@@ -24,39 +29,40 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import ArrayType, StringType, StructType, StructField
 
 # -------------------------------------------------------------------
-# CONFIG — update these for your environment
+# CONFIG — Databricks (Unity Catalog)
 # -------------------------------------------------------------------
-CATALOG        = "health_lh"
-BRONZE_SCHEMA  = "fhir_bronze"
-S3_LANDING     = "s3://your-bucket/fhir-landing/synthea/"
-CHECKPOINT_DIR = "s3://your-bucket/checkpoints/fhir_bronze/"
+CATALOG       = "workspace"
+BRONZE_SCHEMA = "fhir_bronze"
+VOLUME_PATH   = "/Volumes/workspace/fhir_bronze/synthea_raw/"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{BRONZE_SCHEMA}")
+# Drop and recreate for a clean, idempotent load
+spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Step 1: Read raw FHIR bundle files via Auto Loader
+# MAGIC ## Step 1: Read raw FHIR bundle files (batch)
 # MAGIC
-# MAGIC Auto Loader (`cloudFiles`) watches S3 for new files and processes them
-# MAGIC exactly once. `trigger(availableNow=True)` runs it as a batch job —
-# MAGIC processes all pending files then stops. Use `trigger(processingTime="1 minute")`
-# MAGIC for continuous streaming.
-# MAGIC
-# MAGIC Each Synthea file is one FHIR Bundle (~148 entries for a 1,000-patient run).
+# MAGIC `spark.read.text` reads every `.json` file in the Volume as one row per file.
+# MAGIC Each row's `value` column is the entire file content as a string.
+# MAGIC `_metadata.file_path` is the Unity Catalog-compatible way to get the source path
+# MAGIC (`input_file_name()` is blocked in UC environments).
 
 # COMMAND ----------
 raw_bundles = (
-    spark.readStream
-         .format("cloudFiles")
-         .option("cloudFiles.format", "text")
-         .option("cloudFiles.schemaLocation", CHECKPOINT_DIR + "schema/")
-         .option("cloudFiles.inferColumnTypes", "false")
-         .load(S3_LANDING)
-         .withColumn("_source_file", F.input_file_name())
+    spark.read
+         # wholetext=true reads each FILE as one row, not each line.
+         # Without this, a pretty-printed JSON file produces thousands of
+         # partial-JSON rows that the UDF cannot parse.
+         .option("wholetext", "true")
+         .text(VOLUME_PATH)
+         .withColumn("_source_file", F.col("_metadata.file_path"))
          .withColumn("_loaded_at", F.current_timestamp())
          .withColumn("_content_hash", F.sha2(F.col("value"), 256))
          .withColumnRenamed("value", "bundle_json")
 )
+
+print(f"Files read: {raw_bundles.count():,}")
 
 # COMMAND ----------
 # MAGIC %md
@@ -85,7 +91,7 @@ def explode_bundle(bundle_json):
     """
     Extract all resources from a FHIR Bundle JSON string.
     Returns a list of (resource_json, resource_type, fhir_resource_id) structs.
-    Skips entries without a resource (e.g. transaction response entries).
+    Skips entries without a resource or without a resourceType.
     """
     if not bundle_json:
         return []
@@ -94,14 +100,22 @@ def explode_bundle(bundle_json):
     except (ValueError, TypeError):
         return []
 
+    # practitionerInformation*.json files are JSON arrays, not Bundles
+    if not isinstance(bundle, dict):
+        return []
+
     results = []
     for entry in bundle.get("entry", []):
         resource = entry.get("resource")
         if not resource:
             continue
+        resource_type = resource.get("resourceType")
+        if not resource_type:
+            # Skip entries with missing/null resourceType — unroutable in Silver
+            continue
         results.append({
             "resource_json":    json.dumps(resource, separators=(",", ":")),
-            "resource_type":    resource.get("resourceType"),
+            "resource_type":    resource_type,
             "fhir_resource_id": resource.get("id"),
         })
     return results
@@ -116,8 +130,8 @@ def explode_bundle(bundle_json):
 # MAGIC | `resource_type` | e.g. `Patient`, `Condition`, `Observation` — used for routing |
 # MAGIC | `fhir_resource_id` | FHIR `.id` field — used in `_lineage_id` |
 # MAGIC | `_lineage_id` | SHA-256(source_file \| fhir_resource_id) — stable cross-layer join key |
-# MAGIC | `_source_file` | S3 path of the originating bundle file |
-# MAGIC | `_loaded_at` | Timestamp when Auto Loader ingested the file |
+# MAGIC | `_source_file` | Volume path of the originating bundle file |
+# MAGIC | `_loaded_at` | Timestamp when this run ingested the file |
 # MAGIC | `_content_hash` | SHA-256 of raw bundle — detects upstream file changes |
 
 # COMMAND ----------
@@ -147,21 +161,17 @@ bronze_resources = (
 # MAGIC Bronze is intentionally append-only — duplicates are allowed here.
 # MAGIC Idempotency is enforced in Silver via MERGE on `_lineage_id`.
 # MAGIC
-# MAGIC `trigger(availableNow=True)` = micro-batch that processes all pending
-# MAGIC files then stops. Safe to re-run; Auto Loader tracks which files it has
-# MAGIC already processed in the checkpoint directory.
+# MAGIC We DROP TABLE at the top of this notebook so re-runs are safe.
 
 # COMMAND ----------
 (
     bronze_resources
-    .writeStream
+    .write
     .format("delta")
-    .outputMode("append")
-    .option("checkpointLocation", CHECKPOINT_DIR + "raw_bundles/")
-    .option("mergeSchema", "true")
-    .trigger(availableNow=True)
-    .toTable(f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
+    .mode("append")
+    .saveAsTable(f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles")
 )
+print("Bronze write complete.")
 
 # COMMAND ----------
 # MAGIC %md
@@ -213,13 +223,14 @@ null_counts = bronze.select(
     F.sum(F.col("_lineage_id").isNull().cast("int")).alias("null_lineage_id"),
 ).collect()[0]
 
-print(f"Total rows  : {total:,}")
+print(f"Total rows            : {total:,}")
 print(f"Null resource_type    : {null_counts['null_resource_type']}")
 print(f"Null fhir_resource_id : {null_counts['null_fhir_resource_id']}")
 print(f"Null _lineage_id      : {null_counts['null_lineage_id']}")
 
-assert null_counts["null_resource_type"] == 0,    "Malformed entries — check bundle source"
-assert null_counts["null_lineage_id"]    == 0,    "Lineage spine broken — cannot proceed to Silver"
+assert null_counts["null_resource_type"] == 0, "Malformed entries — check bundle source"
+assert null_counts["null_lineage_id"]    == 0, "Lineage spine broken — cannot proceed to Silver"
+print("All checks passed.")
 
 # COMMAND ----------
 # MAGIC %md

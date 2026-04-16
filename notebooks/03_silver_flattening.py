@@ -20,7 +20,7 @@
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-CATALOG       = "health_lh"
+CATALOG       = "workspace"
 BRONZE_SCHEMA = "fhir_bronze"
 SILVER_SCHEMA = "fhir_silver"
 BRONZE_TABLE  = f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles"

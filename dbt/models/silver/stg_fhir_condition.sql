@@ -1,6 +1,6 @@
 -- models/silver/stg_fhir_condition.sql
 -- Flatten FHIR Condition → Silver
--- Input:  health_lh.fhir_bronze.raw_bundles WHERE resource_type = 'Condition'
+-- Input:  workspace.fhir_bronze.raw_bundles WHERE resource_type = 'Condition'
 -- Output: One row per condition with SNOMED code, dates, status
 
 {{ config(

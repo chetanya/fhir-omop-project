@@ -1,6 +1,6 @@
 -- models/silver/stg_fhir_encounter.sql
 -- Flatten FHIR Encounter → Silver
--- Input:  health_lh.fhir_bronze.raw_bundles WHERE resource_type = 'Encounter'
+-- Input:  workspace.fhir_bronze.raw_bundles WHERE resource_type = 'Encounter'
 -- Output: One row per encounter with visit class, period, and HFR facility code
 
 {{ config(

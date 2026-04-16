@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: fhir_bronze
+    database: workspace        # Unity Catalog catalog name (Community Edition)
+    schema: fhir_bronze
+    description: "Bronze Delta table — raw FHIR R4 JSON bundles landed by Auto Loader"
+    tables:
+      - name: raw_bundles
+        description: >
+          One row per FHIR resource extracted from a Synthea bundle.
+          Append-only; deduplication via _lineage_id happens in Silver MERGE.
+        columns:
+          - name: resource_json
+            description: Raw FHIR resource as a JSON string
+          - name: resource_type
+            description: FHIR resourceType (Patient, Condition, Encounter, etc.)
+          - name: fhir_resource_id
+            description: Value of $.id from the FHIR resource
+          - name: _lineage_id
+            description: SHA-256(source_file | fhir_resource_id) — deterministic merge key
+          - name: _source_file
+            description: Original S3/Volume path of the FHIR bundle file
+          - name: _loaded_at
+            description: Timestamp when Auto Loader processed the file
+          - name: _content_hash
+            description: SHA-256 of the raw bundle JSON for audit integrity

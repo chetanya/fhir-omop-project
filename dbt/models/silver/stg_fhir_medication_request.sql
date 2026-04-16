@@ -1,6 +1,6 @@
 -- models/silver/stg_fhir_medication_request.sql
 -- Flatten FHIR MedicationRequest → Silver
--- Input:  health_lh.fhir_bronze.raw_bundles WHERE resource_type = 'MedicationRequest'
+-- Input:  workspace.fhir_bronze.raw_bundles WHERE resource_type = 'MedicationRequest'
 -- Output: One row per prescription with RxNorm code and dosage
 
 {{ config(

@@ -1,6 +1,6 @@
 -- models/silver/stg_fhir_patient.sql
 -- Flatten raw FHIR Patient JSON (Bronze) → structured Silver table
--- Input:  health_lh.fhir_bronze.raw_bundles WHERE resource_type = 'Patient'
+-- Input:  workspace.fhir_bronze.raw_bundles WHERE resource_type = 'Patient'
 -- Output: One row per patient, key fields extracted
 
 {{ config(
