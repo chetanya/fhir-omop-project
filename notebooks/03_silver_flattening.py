@@ -27,6 +27,12 @@ BRONZE_TABLE  = f"{CATALOG}.{BRONZE_SCHEMA}.raw_bundles"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SILVER_SCHEMA}")
 
+# FHIR timestamps use ISO 8601 with timezone offsets (e.g. 2025-01-06T07:24:26-05:00,
+# or +05:30 for IST). Photon's strict ANSI mode rejects these with the default format.
+# Disabling ANSI mode makes to_timestamp() return NULL on unparseable strings
+# instead of throwing — acceptable for Silver where NULLs are handled in Gold.
+spark.conf.set("spark.sql.ansi.enabled", "false")
+
 # Shared ABDM system URL — matches conftest.py constant
 ABDM_ABHA_SYSTEM = "https://healthid.ndhm.gov.in"
 
@@ -125,9 +131,7 @@ patients = (
                 ELSE FALSE
             END
         """).alias("is_deceased"),
-        F.to_timestamp(
-            F.get_json_object("resource_json", "$.deceasedDateTime")
-        ).alias("deceased_datetime"),
+        F.to_timestamp(F.get_json_object("resource_json", "$.deceasedDateTime")).alias("deceased_datetime"),
         "_lineage_id", "_source_file", "_loaded_at",
     )
 )
