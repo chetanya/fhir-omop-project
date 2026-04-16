@@ -328,8 +328,8 @@ encounters = (
         # Duration in minutes (for OMOP visit_occurrence)
         F.expr("""
             CAST(
-                (unix_timestamp(get_json_object(resource_json, '$.period.end'))
-                 - unix_timestamp(get_json_object(resource_json, '$.period.start')))
+                (unix_timestamp(to_timestamp(get_json_object(resource_json, '$.period.end')))
+                 - unix_timestamp(to_timestamp(get_json_object(resource_json, '$.period.start'))))
                 / 60 AS INT
             )
         """).alias("duration_minutes"),
