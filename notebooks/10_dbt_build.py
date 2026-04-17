@@ -16,12 +16,11 @@
 import subprocess
 import os
 
-# Set working directory to the project root
-PROJECT_DIR = "/Workspace/Repos/fhir-omop-project"  # Update this path if cloned elsewhere
-os.chdir(PROJECT_DIR)
-
-print(f"Working directory: {os.getcwd()}")
+print(f"Current working directory: {os.getcwd()}")
 print("")
+
+# Note: dbt will use profiles from ~/.dbt/profiles.yml and run from current directory
+# No need to change directory
 
 # COMMAND ----------
 # MAGIC %md
@@ -46,10 +45,9 @@ print("")
 result = subprocess.run(
     [
         "dbt", "build",
-        "--profiles-dir", "/root/.dbt",
-        "--project-dir", ".",
+        "--profiles-dir", "/Users/chetanya/.dbt",
         "--vars", "{catalog: workspace, gold_schema: omop_gold}",
-        "--target", "dev"
+        "--target", "prod"
     ],
     capture_output=False,
     text=True
