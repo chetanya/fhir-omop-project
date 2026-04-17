@@ -28,46 +28,69 @@ import os
 
 CATALOG = "workspace"
 GOLD_SCHEMA = "omop_gold"
-VOCABULARIES_PATH = "/Workspace/Repos/fhir-omop-project/data/vocabularies"
+VOCABULARIES_PATH = "/Volumes/workspace/omop_gold/vocabularies/vocabularies"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{GOLD_SCHEMA}")
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## Helper: Read vocabulary CSV with proper schema inference
+# MAGIC ## Helper: Read vocabulary CSV with explicit schema
 
 # COMMAND ----------
-def load_vocabulary_csv(filename, required_cols=None):
+# Define OMOP concept table schema (explicit, not inferred)
+CONCEPT_SCHEMA = T.StructType([
+    T.StructField("concept_id", T.LongType(), True),
+    T.StructField("concept_name", T.StringType(), True),
+    T.StructField("domain_id", T.StringType(), True),
+    T.StructField("vocabulary_id", T.StringType(), True),
+    T.StructField("concept_class_id", T.StringType(), True),
+    T.StructField("standard_concept", T.StringType(), True),
+    T.StructField("concept_code", T.StringType(), True),
+    T.StructField("valid_start_date", T.DateType(), True),
+    T.StructField("valid_end_date", T.DateType(), True),
+    T.StructField("invalid_reason", T.StringType(), True)
+])
+
+CONCEPT_RELATIONSHIP_SCHEMA = T.StructType([
+    T.StructField("concept_id_1", T.LongType(), True),
+    T.StructField("concept_id_2", T.LongType(), True),
+    T.StructField("relationship_id", T.StringType(), True),
+    T.StructField("valid_start_date", T.DateType(), True),
+    T.StructField("valid_end_date", T.DateType(), True)
+])
+
+def load_vocabulary_csv(filename, schema=None):
     """
-    Load a vocabulary CSV from data/vocabularies/.
-    If file doesn't exist, returns empty DataFrame with required columns.
+    Load a vocabulary CSV from Volumes with explicit schema.
+    If file doesn't exist, returns None.
 
     Args:
         filename: e.g., 'CONCEPT.csv'
-        required_cols: list of column names to ensure exist
+        schema: StructType for the CSV (prevents inference issues)
 
     Returns:
-        DataFrame with vocabulary data, or empty DF if file missing
+        DataFrame with vocabulary data, or None if file missing
     """
     filepath = f"{VOCABULARIES_PATH}/{filename}"
 
     try:
-        # Read CSV with tab separator (OMOP standard)
-        df = spark.read \
+        # Read CSV with tab separator (OMOP standard) and explicit schema
+        reader = spark.read \
             .option("header", "true") \
-            .option("sep", "\t") \
-            .option("inferSchema", "true") \
-            .csv(filepath)
+            .option("sep", "\t")
+
+        if schema:
+            reader = reader.schema(schema)
+        else:
+            reader = reader.option("inferSchema", "true")
+
+        df = reader.csv(filepath)
 
         print(f"✓ Loaded {filename}: {df.count():,} rows")
         return df
 
     except Exception as e:
-        print(f"⚠ {filename} not found at {filepath}")
-        if required_cols:
-            # Return empty DataFrame with required schema
-            schema = T.StructType([T.StructField(col, T.StringType()) for col in required_cols])
-            return spark.createDataFrame([], schema)
+        print(f"⚠ {filename} not found at {filepath}: {str(e)}")
         return None
 
 # COMMAND ----------
@@ -84,16 +107,12 @@ def load_vocabulary_csv(filename, required_cols=None):
 # MAGIC **Usage in dbt:** `WHERE vocabulary_id = 'SNOMED' AND standard_concept = 'S'`
 
 # COMMAND ----------
-concept_df = load_vocabulary_csv(
-    "CONCEPT.csv",
-    required_cols=[
-        "concept_id", "concept_name", "domain_id", "vocabulary_id",
-        "concept_class_id", "standard_concept", "concept_code",
-        "valid_start_date", "valid_end_date"
-    ]
-)
+concept_df = load_vocabulary_csv("CONCEPT.csv", schema=CONCEPT_SCHEMA)
 
 if concept_df is not None:
+    # Drop existing table to avoid schema conflicts
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{GOLD_SCHEMA}.concept")
+
     # Filter to active, standard concepts only
     concept_df = concept_df.filter(
         (concept_df.standard_concept == 'S') |
@@ -124,15 +143,12 @@ if concept_df is not None:
 # MAGIC Not critical for Phase 2; included for completeness.
 
 # COMMAND ----------
-concept_rel_df = load_vocabulary_csv(
-    "CONCEPT_RELATIONSHIP.csv",
-    required_cols=[
-        "concept_id_1", "concept_id_2", "relationship_id",
-        "valid_start_date", "valid_end_date"
-    ]
-)
+concept_rel_df = load_vocabulary_csv("CONCEPT_RELATIONSHIP.csv", schema=CONCEPT_RELATIONSHIP_SCHEMA)
 
 if concept_rel_df is not None:
+    # Drop existing table to avoid schema conflicts
+    spark.sql(f"DROP TABLE IF EXISTS {CATALOG}.{GOLD_SCHEMA}.concept_relationship")
+
     # Filter to active relationships
     concept_rel_df = concept_rel_df.filter(concept_rel_df.valid_end_date == '2099-12-31')
 
