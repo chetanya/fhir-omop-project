@@ -36,7 +36,24 @@ upstream FHIR server.
 ---
 
 ## Step 3 — Silver Flattening (Bronze JSON → Typed Silver Tables)
-**Date:** _(fill in when completed)_
-**Key insight:**
-**Gotcha:**
-**ABDM note:**
+**Date:** 2026-04-15
+**Key insight:** FHIR's flexible schema (multiple data types for the same field —
+`value[x]`, `onset[x]`, `effective[x]`) forces Silver to extract all variants as
+separate columns. Gold then routes to OMOP based on which one is populated and
+the OMOP concept domain. This "extract all, let Gold decide" pattern keeps Silver
+agnostic to OMOP semantics and makes re-runs idempotent via MERGE on `_lineage_id`.
+
+**Gotcha:** Timestamps with timezone offsets (ISO-8601 format like `2025-01-06T07:24:26+05:30`
+for IST) require wrapping with `to_timestamp()` before `unix_timestamp()`. The raw
+`get_json_object()` string returns NULL when passed directly to `unix_timestamp()`,
+because `unix_timestamp` expects `'yyyy-MM-dd HH:mm:ss'` format. Spark SQL's ANSI mode
+(enabled by default on Databricks Photon) rejects timezone-offset strings entirely —
+setting `spark.sql.ansi.enabled = false` lets `to_timestamp()` parse them gracefully.
+
+**ABDM note:** Synthetic FHIR bundles (Synthea) preserve ABDM identifier structure —
+`identifier` array with system URL `https://healthid.ndhm.gov.in` — but the *values*
+are Synthea-generated UUIDs, not real ABHA IDs. Silver extraction of ABHA ID still works
+(using `get()` + `filter()` on the identifier array), but Gold will see NULLs for ABHA
+until real ABDM data flows through. Health Facility Registry codes (`https://facility.ndhm.gov.in`)
+are similarly missing from Synthea but the extraction pattern (conditional on system URL)
+is ready for real data.
