@@ -101,6 +101,40 @@ originating JSON file.
 
 ---
 
+## MD-006 · dbt timeout configuration for Databricks SQL Warehouse
+
+**Context:** dbt on Databricks uses SQL Warehouse sessions which timeout after 15 minutes
+of inactivity by default. The initial Phase 2 dbt build (materializing 6 large gold tables
+with vocabulary lookups) took 30+ minutes and failed with:
+```
+Retry request would exceed Retry policy max retry duration of 900.0 seconds
+```
+
+**Decision:** Increase `timeout_seconds: 3600` (1 hour) and reduce `threads: 2` in dbt profiles.yml.
+
+**Why 3600 seconds:**
+- Allows long-running transformations (large incremental MERGEs) to complete without timing out
+- 1 hour is overkill for most runs, but safe for the first materialization with full concept lookups
+- Subsequent runs will be faster (incremental only)
+
+**Why reduce threads from 4 to 2:**
+- Lower concurrency = less load on warehouse = more stable connections
+- For a 1,000-person dataset, parallelizing across 4 threads adds overhead without benefit
+- Reduces risk of connection resets under load
+
+**Trade-off:** Slower per-thread execution, but more stable for Community Edition warehouses.
+In production (larger warehouse), increase threads back to 4 and use auto-scaling.
+
+**Alternative:** Run dbt locally instead of in Databricks. Requires:
+- `dbt-databricks` installed (via pip, uv, or homebrew)
+- profiles.yml configured with Databricks host/token
+- No Databricks Repos required
+- Faster iteration and better error messages
+
+**Chosen approach:** Run locally for Phase 2 development; move to Databricks jobs/CI in Phase 3.
+
+---
+
 ## MD-006 · ABHA ID extraction: `FILTER` + `get()` vs. `identifier[0]`
 
 **Context:** FHIR `Patient.identifier` is an array of `{system, value}` objects. The ABDM
