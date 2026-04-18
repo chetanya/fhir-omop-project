@@ -3,9 +3,17 @@
 # No Databricks cluster needed — runs in local PySpark mode
 
 import json
+import os
+import sys
 import pytest
 from pyspark.sql import SparkSession
 from helpers import ABDM_ABHA_SYSTEM, make_fhir_df
+
+# Ensure Spark workers use the same Python interpreter as the test driver.
+# Without this, the system Python (which may differ in minor version) is used
+# for worker processes, causing a PYTHON_VERSION_MISMATCH error at runtime.
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 # -------------------------------------------------------------------
 # Sample FHIR resources (minimal valid R4 + ABDM extensions)

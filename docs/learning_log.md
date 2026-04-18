@@ -104,3 +104,19 @@ Databricks requires repo in Repos (not just notebook). Local recommended for Pha
 
 **ABDM note:** Gold models now map FHIR codes → OMOP concepts for all resources.
 Real ABDM data will use these mappings for code system translation.
+
+---
+
+## Step 10 — Gold Build: dbt replaced with native SparkSQL
+**Date:** 2026-04-17
+**Key insight:** `dbt-databricks` requires a SQL Warehouse HTTP endpoint.
+Community Edition only provides an all-purpose cluster — there is no warehouse to
+connect to. The fix is to run the same SQL logic via `spark.sql()` directly inside
+the notebook, which needs no external connection at all.
+**Gotcha:** Three compounding failures in the original dbt approach: (1) no SQL
+Warehouse on CE, (2) catalog `workspace` doesn't exist — must use `hive_metastore`,
+(3) `dbt_utils.generate_surrogate_key` macro requires the `dbt_utils` package to be
+installed via `packages.yml` (missing). Replaced with `ABS(xxhash64(...))`.
+**ABDM note:** `race_code` was missing from `stg_fhir_patient` (the dbt model had a
+latent bug). Added extraction of US Core Race extension for Synthea compatibility;
+ABDM profiles return NULL here which is correct (Indian records rarely have race coded).
