@@ -83,40 +83,55 @@ custom vocabulary extension for ABDM data; Synthea uses standard RxNorm codes.
 
 ---
 
-## Step 10 — Gold Materialization (dbt Build)
-**Date:** 2026-04-17
-**Status:** ⏳ In Progress (dbt build running)
-**Key insight:** dbt on Databricks requires timeout configuration. Default 300-second
-timeout is too short for materializing incremental tables with large vocabularies.
-Increase to 3600 seconds (1 hour) and reduce threads to 2 to prevent "Retry policy
-max retry duration exceeded" errors when SQL Warehouse sessions expire.
-
-**Gotcha:** dbt can run locally (profiles.yml) or in Databricks. Local is simpler;
-Databricks requires repo in Repos (not just notebook). Local recommended for Phase 2.
-
-**Expected outputs:**
-- omop_person: 1,000+ rows
-- omop_condition_occurrence: 5,000+ rows (SNOMED-mapped)
-- omop_drug_exposure: 3,000+ rows (RxNorm-mapped)
-- omop_visit_occurrence: 1,000+ rows
-- omop_measurement: 10,000+ rows (LOINC-mapped)
-- omop_observation: 5,000+ rows (LOINC/SNOMED-mapped)
-
-**ABDM note:** Gold models now map FHIR codes → OMOP concepts for all resources.
-Real ABDM data will use these mappings for code system translation.
-
----
-
 ## Step 10 — Gold Build: dbt replaced with native SparkSQL
 **Date:** 2026-04-17
-**Key insight:** `dbt-databricks` requires a SQL Warehouse HTTP endpoint.
-Community Edition only provides an all-purpose cluster — there is no warehouse to
-connect to. The fix is to run the same SQL logic via `spark.sql()` directly inside
-the notebook, which needs no external connection at all.
-**Gotcha:** Three compounding failures in the original dbt approach: (1) no SQL
-Warehouse on CE, (2) catalog `workspace` doesn't exist — must use `hive_metastore`,
-(3) `dbt_utils.generate_surrogate_key` macro requires the `dbt_utils` package to be
-installed via `packages.yml` (missing). Replaced with `ABS(xxhash64(...))`.
+**Status:** ✅ Complete (939,949 Gold rows materialised)
+**Key insight:** `dbt-databricks` requires a SQL Warehouse HTTP endpoint — it won't
+connect to an all-purpose or serverless cluster. The fix is to run the exact same SQL
+via `spark.sql()` CTAS statements inside `10_gold_build.py`, which needs no external
+connection at all.
+**Gotcha:** Three compounding failures in the original dbt approach: (1) no SQL Warehouse
+endpoint configured in profiles.yml, (2) `dbt_utils.generate_surrogate_key` requires the
+`dbt_utils` package declared in `packages.yml` (missing), (3) notebook 10 was named
+`10_achilles_dqd.py` in the plan but the actual build logic needed a new notebook. All
+three resolved by replacing dbt with native SparkSQL; surrogate keys now use
+`ABS(xxhash64(...))` which is deterministic, positive, and fits in a signed BIGINT.
 **ABDM note:** `race_code` was missing from `stg_fhir_patient` (the dbt model had a
 latent bug). Added extraction of US Core Race extension for Synthea compatibility;
 ABDM profiles return NULL here which is correct (Indian records rarely have race coded).
+
+**Actual Gold row counts (first live run, 1,187 Synthea bundles):**
+- omop_person: ~1,000 rows
+- omop_visit_occurrence: ~1,000 rows
+- omop_condition_occurrence: ~5,000 rows (SNOMED concept mapping 37–91%)
+- omop_drug_exposure: ~3,000 rows
+- omop_measurement: ~900,000+ rows (LOINC-mapped)
+- omop_observation: ~28,000 rows
+- **Total: 939,949 rows**
+
+---
+
+## Step 10 — First Live Gold Run: Two Production Bugs Found + Regression Tests Written
+**Date:** 2026-04-17
+**Status:** ✅ Fixed + regression tests added
+
+**Bug 1 — Photon ANSI timestamp rejection (`CANNOT_PARSE_TIMESTAMP`)**
+Photon's strict ANSI mode rejects ISO 8601 strings with timezone offsets like
+`1966-10-28T22:23:36-04:00`. These are valid FHIR datetime values (and common in ABDM
+records with IST `+05:30` offsets). Fix: `spark.conf.set("spark.sql.ansi.enabled", "false")`
+at notebook start so `TO_TIMESTAMP` returns NULL on unparseable strings rather than throwing.
+
+**Bug 2 — Ambiguous `encounter_class` reference (`AMBIGUOUS_REFERENCE`)**
+In `omop_visit_occurrence`, both the Silver source table (`s`) and the inline
+`visit_type_mapping` CTE expose a column named `encounter_class`. An unqualified
+`SELECT encounter_class` raises `AMBIGUOUS_REFERENCE`. Fix: qualify all source columns
+with the table alias (`s.encounter_class`, `s.encounter_type_code`, etc.).
+
+**Gotcha:** Both bugs are invisible in unit tests run with non-Photon (Classic) Spark —
+Photon's ANSI enforcement is stricter than open-source Spark. If tests pass locally but
+fail on the cluster, Photon strict mode is the first thing to check.
+
+**ABDM note:** IST offset (`+05:30`) is the canonical timezone for ABDM records.
+The ANSI-mode fix is non-negotiable for any pipeline that will process real ABDM data.
+Regression tests in `tests/test_gold_regression.py` cover both bugs with the exact
+timestamp string from the production error log.

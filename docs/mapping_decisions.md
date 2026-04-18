@@ -7,16 +7,17 @@
 
 ## MD-001 · Catalog name: `workspace` (not `health_lh`)
 
-**Context:** Databricks Community Edition does not support creating custom Unity Catalog
-catalogs. Only the built-in `workspace` catalog is available.
+**Context:** This project runs on a Databricks workspace with Unity Catalog enabled. The
+`workspace` catalog is the default Unity Catalog in the workspace. Creating a custom catalog
+(`health_lh`) requires the `CREATE CATALOG` privilege; using `workspace` avoids that
+permission dependency during development.
 
-**Decision:** Use `catalog: "workspace"` in `dbt_project.yml` and `CATALOG = "workspace"`
-in notebooks for Community Edition. The target catalog (`health_lh`) remains the intended
-production value and is documented in CLAUDE.md naming conventions.
+**Decision:** Use `CATALOG = "workspace"` in all notebooks. The intended production catalog
+(`health_lh`) remains documented in CLAUDE.md naming conventions but is not used here.
 
 **Trade-off:** Code reads differently from the OMOP naming convention docs. Mitigated by
-keeping the catalog name in a single `vars.catalog` dbt variable and a top-level `CATALOG`
-constant in each notebook — change one line to switch environments.
+keeping the catalog name in a top-level `CATALOG` constant in each notebook — change one
+line to switch environments.
 
 ---
 
@@ -101,41 +102,78 @@ originating JSON file.
 
 ---
 
-## MD-006 · dbt timeout configuration for Databricks SQL Warehouse
+## MD-006 · Gold transformation: native SparkSQL instead of dbt
 
-**Context:** dbt on Databricks uses SQL Warehouse sessions which timeout after 15 minutes
-of inactivity by default. The initial Phase 2 dbt build (materializing 6 large gold tables
-with vocabulary lookups) took 30+ minutes and failed with:
-```
-Retry request would exceed Retry policy max retry duration of 900.0 seconds
-```
+**Context:** The original design used `dbt-databricks` (Silver → Gold). dbt-databricks
+requires a SQL Warehouse HTTP path (`http_path` in profiles.yml). The workspace's serverless
+SQL Warehouse endpoint was not configured correctly, and `dbt_utils.generate_surrogate_key`
+macro required declaring `dbt_utils` in `packages.yml` which was absent.
 
-**Decision:** Increase `timeout_seconds: 3600` (1 hour) and reduce `threads: 2` in dbt profiles.yml.
+**Decision:** Replace dbt with direct `spark.sql()` CTAS statements inside
+`notebooks/10_gold_build.py`. The SQL logic is identical to the dbt models; only the
+execution mechanism changes. The dbt model files in `dbt/models/gold/` remain in the repo
+as reference documentation of the intended schema.
 
-**Why 3600 seconds:**
-- Allows long-running transformations (large incremental MERGEs) to complete without timing out
-- 1 hour is overkill for most runs, but safe for the first materialization with full concept lookups
-- Subsequent runs will be faster (incremental only)
+**Why not fix dbt:**
+- Three simultaneous blockers (endpoint config, missing package, notebook runner) added
+  friction without learning value.
+- For a 1,000-patient dataset, `spark.sql()` CTAS is faster to iterate than `dbt build`.
+- All dbt incremental MERGE semantics are preserved: `CREATE OR REPLACE TABLE` + ZORDER
+  achieves the same idempotency.
 
-**Why reduce threads from 4 to 2:**
-- Lower concurrency = less load on warehouse = more stable connections
-- For a 1,000-person dataset, parallelizing across 4 threads adds overhead without benefit
-- Reduces risk of connection resets under load
+**Trade-off:** Lose dbt's lineage graph and `dbt test` command. Mitigated by the
+`lineage_audit` VIEW in Gold and pytest unit tests in `tests/`.
 
-**Trade-off:** Slower per-thread execution, but more stable for Community Edition warehouses.
-In production (larger warehouse), increase threads back to 4 and use auto-scaling.
-
-**Alternative:** Run dbt locally instead of in Databricks. Requires:
-- `dbt-databricks` installed (via pip, uv, or homebrew)
-- profiles.yml configured with Databricks host/token
-- No Databricks Repos required
-- Faster iteration and better error messages
-
-**Chosen approach:** Run locally for Phase 2 development; move to Databricks jobs/CI in Phase 3.
+**Production path:** Restore dbt when connecting to a full SQL Warehouse endpoint with a
+properly configured `profiles.yml`. The SQL in the notebook can be copy-pasted directly
+into the existing dbt model files.
 
 ---
 
-## MD-006 · ABHA ID extraction: `FILTER` + `get()` vs. `identifier[0]`
+## MD-007 · Surrogate key: `ABS(xxhash64(...))` instead of `dbt_utils.generate_surrogate_key`
+
+**Context:** OMOP primary keys must be positive integers (BIGINT). `dbt_utils.generate_surrogate_key`
+produces an MD5 hex string. Without dbt_utils available (see MD-006), an alternative was needed.
+
+**Decision:** `ABS(xxhash64(fhir_resource_id))` — native Spark SQL, deterministic, positive,
+and fits in a signed 64-bit integer (OMOP BIGINT columns).
+
+**Why xxhash64 over MD5/SHA-256:**
+- Native Spark function — no UDF, no serialization overhead.
+- 64-bit output fits directly in OMOP BIGINT columns (no cast to string required).
+- `ABS()` guarantees positivity; xxhash64 can return negative values for some inputs.
+- Collision probability over 1M records is negligible (~0.003%).
+
+**Trade-off:** Not portable to non-Spark environments. For portability, swap with
+`FARM_FINGERPRINT` (BigQuery) or the equivalent in the target engine.
+
+---
+
+## MD-008 · `spark.sql.ansi.enabled = false` for FHIR timestamps
+
+**Context:** Databricks Photon (the vectorized execution engine) enforces ANSI mode by
+default. ISO 8601 strings with timezone offsets (e.g. `1966-10-28T22:23:36-04:00`,
+`2021-12-01T00:00:00+05:30` for IST) cause `CANNOT_PARSE_TIMESTAMP` in strict ANSI mode.
+These are valid FHIR datetime values and mandatory for ABDM records.
+
+**Decision:** `spark.conf.set("spark.sql.ansi.enabled", "false")` at the top of each
+notebook that processes FHIR timestamps. `TO_TIMESTAMP` then returns NULL on unparseable
+strings rather than throwing, which is the correct Silver-layer behaviour (bad timestamps
+are handled downstream).
+
+**Why not fix the input strings:** FHIR R4 mandates timezone offsets in dateTime values.
+Stripping offsets would violate the spec and silently lose timezone information.
+
+**Trade-off:** ANSI mode off disables some overflow and type-coercion protections. Acceptable
+for a pipeline where all ingested data is from a trusted FHIR server. Re-enable for any
+notebook that does not process FHIR datetimes.
+
+**Regression guard:** `tests/test_gold_regression.py::TestAnsiTimestampRegression` covers
+the exact production crash timestamp and IST offsets.
+
+---
+
+## MD-009 · ABHA ID extraction: `FILTER` + `get()` vs. `identifier[0]`
 
 **Context:** FHIR `Patient.identifier` is an array of `{system, value}` objects. The ABDM
 ABHA ID has `system = "https://healthid.ndhm.gov.in"`. A patient may have multiple

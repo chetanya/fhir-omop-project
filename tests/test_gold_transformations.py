@@ -187,13 +187,7 @@ class TestGenderConceptLookup:
 
     def test_empty_concept_table_defaults_to_zero(self, spark):
         """Vocabularies not yet loaded — all concept_ids must be 0, not NULL."""
-        spark.createDataFrame([], StructType([
-            StructField("concept_id",       LongType(),   False),
-            StructField("concept_code",     StringType(), True),
-            StructField("vocabulary_id",    StringType(), True),
-            StructField("standard_concept", StringType(), True),
-            StructField("domain_id",        StringType(), True),
-        ])).createOrReplaceTempView("concept")
+        build_concept_view(spark, [])
 
         result = spark.sql("""
             SELECT COALESCE(gc.concept_id, 0) AS gender_concept_id
@@ -292,13 +286,7 @@ class TestObservationRouting:
             "value_string":        None,
         }
         defaults.update(kwargs)
-        schema = StructType([
-            StructField("fhir_observation_id", StringType(), True),
-            StructField("value_quantity",      DoubleType(), True),
-            StructField("value_concept_code",  StringType(), True),
-            StructField("value_string",        StringType(), True),
-        ])
-        return spark.createDataFrame([defaults], schema=schema)
+        return spark.createDataFrame([defaults], schema=self._ROUTING_SCHEMA)
 
     def test_numeric_observation_routes_to_measurement(self, spark):
         df = self._make_silver_row(spark, value_quantity=72.0)
@@ -544,27 +532,29 @@ class TestSnomedConceptLookup:
 
 
 # ---------------------------------------------------------------------------
-# Catalog / schema constants (regression guard)
+# Catalog / schema constants in notebook source (regression guard)
 # ---------------------------------------------------------------------------
 
 class TestCatalogConstants:
     """
-    Community Edition uses hive_metastore. If this notebook is ever ported to
-    a paid workspace, the catalog name changes. These tests document the
-    expected CE values and will fail loudly if someone changes them by mistake.
+    Reads the notebook source to verify catalog/schema constant assignments.
+    Catches accidental edits to CATALOG, SILVER_SCHEMA, GOLD_SCHEMA, or BRONZE_SCHEMA
+    without needing to run the full Databricks job.
     """
 
-    def test_catalog_is_workspace(self):
-        # The catalog constant is defined in the notebook, not importable —
-        # document the expected value as a plain assertion.
-        expected = "workspace"
-        assert expected == "workspace", (
-            "This workspace uses Unity Catalog. "
-            "For Community Edition without Unity Catalog, change to 'hive_metastore'."
+    import pathlib
+    _NOTEBOOK = pathlib.Path(__file__).parent.parent / "notebooks" / "10_gold_build.py"
+
+    @pytest.mark.parametrize("line", [
+        'CATALOG       = "workspace"',
+        'SILVER_SCHEMA = "fhir_silver"',
+        'GOLD_SCHEMA   = "omop_gold"',
+        'BRONZE_SCHEMA = "fhir_bronze"',
+    ])
+    def test_notebook_constant(self, line):
+        """Each expected assignment must appear verbatim in the notebook."""
+        source = self._NOTEBOOK.read_text()
+        assert line in source, (
+            f"Expected constant assignment not found in notebook:\n  {line!r}\n"
+            "Update this test if the catalog/schema was intentionally renamed."
         )
-
-    def test_gold_schema_name(self):
-        assert "omop_gold" == "omop_gold"
-
-    def test_silver_schema_name(self):
-        assert "fhir_silver" == "fhir_silver"

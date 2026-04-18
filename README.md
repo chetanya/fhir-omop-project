@@ -8,7 +8,7 @@ clinical data standards (FHIR, OMOP, ABDM).
 
 > **Note:** This is a learning project, not a production codebase. Code is written to be
 > readable and well-commented rather than optimised. The pipeline runs on Databricks
-> Community Edition (free tier) against synthetic patient data — no real PHI is involved.
+> (Unity Catalog workspace) against synthetic patient data — no real PHI is involved.
 
 ---
 
@@ -18,8 +18,7 @@ clinical data standards (FHIR, OMOP, ABDM).
 |-------|-------------|
 | **Bronze** | Land raw Synthea FHIR bundles (JSON) into Delta Lake as-is |
 | **Silver** | Flatten each FHIR resource type into typed Delta tables |
-| **Gold** | Transform Silver into OMOP CDM v5.4 tables |
-| **dbt** | Silver → Gold transformations with incremental merge strategy |
+| **Gold** | Transform Silver into OMOP CDM v5.4 tables via native SparkSQL |
 | **Tests** | pytest unit tests runnable locally without a cluster |
 | **Docs** | Mapping decisions log, ABDM gap analysis, learning log |
 
@@ -30,13 +29,12 @@ with a Maharashtra (India) demographic module to approximate Indian patient data
 
 ## Prerequisites
 
-- **Databricks Community Edition** (free) — [sign up](https://community.cloud.databricks.com/)
+- **Databricks workspace** with Unity Catalog enabled (the `workspace` catalog)
 - **Java 11+** (for Synthea)
 - **Python 3.9+** (for local tests)
-- **dbt-databricks** (for Gold transformations)
 
-No AWS account or paid Databricks workspace is required to follow along. The notebooks
-use Unity Catalog Volumes instead of S3 for file storage.
+The Gold build runs via native `spark.sql()` — no dbt installation required. The notebooks
+use Unity Catalog Volumes for file storage.
 
 ---
 
@@ -69,6 +67,8 @@ Import the notebooks in order:
 notebooks/01_synthea_setup.py       ← upload FHIR files to a Unity Catalog Volume
 notebooks/02_bronze_ingestion.py    ← JSON bundles → raw_bundles Delta table
 notebooks/03_silver_flattening.py   ← raw_bundles → typed per-resource tables
+notebooks/09_vocabulary_setup.py    ← load OMOP concept tables from Athena CSVs
+notebooks/10_gold_build.py          ← Silver → Gold OMOP tables (SparkSQL CTAS)
 ```
 
 Each notebook has a detailed markdown header explaining what it does, what to expect
@@ -104,9 +104,9 @@ Work through them in order. Each notebook builds on the previous one's output ta
 
 | Layer | Tool |
 |-------|------|
-| Compute | Databricks (Community Edition) |
+| Compute | Databricks (Unity Catalog workspace, serverless compute) |
 | Storage | Delta Lake on Unity Catalog Volumes |
-| Transformation | PySpark (Bronze→Silver) + dbt (Silver→Gold) |
+| Transformation | PySpark (Bronze→Silver) + SparkSQL CTAS (Silver→Gold) |
 | Synthetic data | Synthea with Maharashtra module |
 | Vocabulary | OHDSI Athena (SNOMED, RxNorm, LOINC) |
 | Data quality | OHDSI Achilles + DQD |
@@ -148,7 +148,7 @@ context is pre-loaded. Run `claude` in the project root to start.
 
 Useful prompts:
 - `"status"` — where am I in the learning path?
-- `"Generate the dbt model for FHIR Condition → OMOP condition_occurrence"`
+- `"Generate the SparkSQL for FHIR Condition → OMOP condition_occurrence"`
 - `"What ABDM extensions do I need to handle in the Encounter mapping?"`
 - `"Run the patient mapping tests and fix any failures"`
 

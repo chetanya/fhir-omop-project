@@ -23,7 +23,7 @@ flowchart TD
     end
 
     %% ── Silver ────────────────────────────────────────────────────
-    subgraph SLV["Silver · Delta Lake  (dbt incremental MERGE)"]
+    subgraph SLV["Silver · Delta Lake  (PySpark batch, CREATE OR REPLACE TABLE)"]
         SP["stg_fhir_patient\nabha_id · mrn\nbirth_date · gender\nis_deceased"]
         SC["stg_fhir_condition\ncondition_source_code\ncondition_start_date\nclinical_status"]
         SM["stg_fhir_medication_request\ndrug_source_code\ndrug_exposure_start_date\ndose_value · doses_per_day"]
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     %% ── Gold / OMOP ───────────────────────────────────────────────
-    subgraph GLD["Gold · OMOP CDM v5.4  (dbt incremental MERGE)"]
+    subgraph GLD["Gold · OMOP CDM v5.4  (SparkSQL CTAS · notebook 10_gold_build.py)"]
         OP["person"]
         OVO["visit_occurrence"]
         OCO["condition_occurrence"]
@@ -57,10 +57,10 @@ flowchart TD
     SYNTHEA & ABDM --> S3F
     ATHENA --> S3V
 
-    S3F -- "Auto Loader\n(cloudFiles)" --> BR
+    S3F -- "spark.read.text\n(batch, wholetext)" --> BR
     S3V --> VC
 
-    BR -- "Step 3\ndbt silver" --> SP & SC & SM & SO & SE
+    BR -- "Step 3\nPySpark" --> SP & SC & SM & SO & SE
 
     SP -- "Step 4" --> OP
     SE -- "Step 8" --> OVO
@@ -123,22 +123,22 @@ flowchart LR
 | Step | Notebook | What it builds | Status |
 |------|----------|----------------|--------|
 | 1 | `01_synthea_setup.py` | Generate 1,000 synthetic patients (Maharashtra) | ✅ Done |
-| 2 | `02_bronze_ingestion.py` | Auto Loader → `fhir_bronze.raw_bundles` (Delta, append-only) | ✅ Done |
+| 2 | `02_bronze_ingestion.py` | `spark.read.text` (batch) → `fhir_bronze.raw_bundles` (Delta) | ✅ Done |
 | 3 | `03_silver_flattening.py` | Bronze → 5 Silver tables (dbt MERGE on `_lineage_id`) | ✅ Done |
 
 ---
 
 ### Phase 2 — FHIR → OMOP Mapping `Steps 4–10`
 
-| Step | Notebook | FHIR → OMOP | Key challenge |
-|------|----------|-------------|---------------|
-| 4 | `04_omop_patient.py` | Patient → `person` | gender/race `concept_id` lookup; ABHA ID as `person_source_value` |
-| 5 | `05_omop_condition.py` | Condition → `condition_occurrence` | SNOMED → standard concept; source vs standard concept split |
-| 6 | `06_omop_medication.py` | MedicationRequest → `drug_exposure` | RxNorm normalization; `days_supply` derivation |
-| 7 | `07_omop_observation.py` | Observation → `measurement` / `observation` | LOINC domain routing; unit concept_id lookup |
-| 8 | `08_omop_encounter.py` | Encounter → `visit_occurrence` | visit type concept_id; care_site from HFR code |
-| 9 | `09_vocabulary_setup.py` | Load OMOP vocab tables | Athena download; Delta Lake vocab tables |
-| 10 | `10_achilles_dqd.py` | Run Achilles + DQD | Automated data quality checks against OMOP CDM |
+| Step | Notebook | FHIR → OMOP | Key challenge | Status |
+|------|----------|-------------|---------------|--------|
+| 4 | `04_omop_patient.py` | Patient → `person` | gender/race `concept_id` lookup; ABHA ID as `person_source_value` | ✅ Done |
+| 5 | `05_omop_condition.py` | Condition → `condition_occurrence` | SNOMED → standard concept; source vs standard concept split | ✅ Done |
+| 6 | `06_omop_medication.py` | MedicationRequest → `drug_exposure` | RxNorm normalization; `days_supply` derivation | ✅ Done |
+| 7 | `07_omop_observation.py` | Observation → `measurement` / `observation` | LOINC domain routing; unit concept_id lookup | ✅ Done |
+| 8 | `08_omop_encounter.py` | Encounter → `visit_occurrence` | visit type concept_id; care_site from HFR code | ✅ Done |
+| 9 | `09_vocabulary_setup.py` | Load OMOP vocab tables | Athena download; Delta Lake vocab tables | ✅ Done |
+| 10 | `10_gold_build.py` | Silver → all 6 Gold OMOP tables | SparkSQL CTAS replaces dbt; Photon ANSI mode; surrogate keys | ✅ Done |
 
 ---
 
@@ -185,13 +185,16 @@ Unit tests (local PySpark, no cluster)   ← pytest tests/ -v
 ├── test_patient_mapping.py              Patient field extraction + ABHA fallback
 ├── test_condition_mapping.py            SNOMED extraction + onset date fallback
 ├── test_medication_mapping.py           RxNorm extraction + dosage parsing
-└── test_abdm_extensions.py             ABHA format · HFR codes · Consent profile
+├── test_abdm_extensions.py             ABHA format · HFR codes · Consent profile
+├── test_gold_transformations.py         Gold layer logic (43 tests)
+│                                        surrogate keys · routing · concept lookup
+└── test_gold_regression.py             Production bug regression guard (16 tests)
+                                         Photon ANSI timestamps · encounter_class ambiguity
 
-Integration tests (Databricks cluster)  ← dbt test
-├── assert_person_no_nulls.sql
-├── assert_condition_valid_concepts.sql
-└── assert_drug_exposure_dates.sql
+Integration tests (Databricks SQL)      ← spark.sql() in notebook 10_gold_build.py
+├── Row count summary (section 5)
+└── Concept mapping rate check (section 6)
 
-Data quality (post-load)                ← OHDSI Achilles + DQD
+Data quality (post-load)                ← OHDSI Achilles + DQD  (Phase 3)
 └── Automated CDM conformance checks
 ```
