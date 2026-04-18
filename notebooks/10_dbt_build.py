@@ -15,25 +15,92 @@
 # COMMAND ----------
 import subprocess
 import os
+import shutil
 
-print(f"Current working directory: {os.getcwd()}")
-print("")
+print("Setting up dbt environment for Databricks execution...\n")
 
-# Note: dbt will use profiles from ~/.dbt/profiles.yml and run from current directory
-# No need to change directory
+# Determine paths
+home_dir = os.path.expanduser("~")
+profiles_dir = os.path.join(home_dir, ".dbt")
+
+# Try multiple possible Repos paths (users can clone to different locations)
+possible_repos_paths = [
+    "/Workspace/Repos/chetanya.pandya@gmail.com/fhir-omop-project/dbt",
+    "/Workspace/Repos/fhir-omop-project/dbt",
+    "/Workspace/Repos/anthropic/fhir-omop-project/dbt",
+    "/dbfs/Workspace/Repos/fhir-omop-project/dbt",
+]
+
+dbt_project_dir = None
+print(f"Home directory: {home_dir}")
+print(f"Profiles directory: {profiles_dir}")
+print(f"Current working directory: {os.getcwd()}\n")
+print("Looking for dbt project in Repos...")
+
+for path in possible_repos_paths:
+    if os.path.isdir(path):
+        dbt_project_dir = path
+        print(f"✓ Found dbt project at: {dbt_project_dir}\n")
+        break
+
+if not dbt_project_dir:
+    print(f"✗ dbt project not found in Repos.")
+    print("\nTo proceed, clone the repository into Databricks Repos:")
+    print("  1. In Databricks workspace, click 'Repos'")
+    print("  2. Click 'Clone a repository'")
+    print("  3. URL: https://github.com/chetanyapandya/fhir-omop-project")
+    print("  4. Name: fhir-omop-project")
+    print("  5. Click Clone")
+    print("\nThen re-run this notebook.")
+    raise FileNotFoundError("dbt project not found in Databricks Repos")
+
+if not os.path.isdir(profiles_dir):
+    print(f"Creating .dbt directory at {profiles_dir}")
+    os.makedirs(profiles_dir, exist_ok=True)
+
+# Ensure profiles.yml exists with Databricks connection config
+profiles_yml = os.path.join(profiles_dir, "profiles.yml")
+if not os.path.exists(profiles_yml):
+    print(f"Creating profiles.yml at {profiles_yml}")
+    # Note: Databricks will use workspace default auth, no token needed in Notebooks
+    profiles_content = """fhir_omop_databricks:
+  target: prod
+  outputs:
+    prod:
+      type: databricks
+      host: dbc-8b9c9e4e-9d6e.cloud.databricks.com
+      http_path: /sql/1.0
+      schema: omop_gold
+      catalog: workspace
+      threads: 2
+      timeout_seconds: 3600
+"""
+    with open(profiles_yml, 'w') as f:
+        f.write(profiles_content)
+    print(f"✓ Created profiles.yml\n")
+else:
+    print(f"✓ profiles.yml exists at {profiles_yml}\n")
+
+# Install dbt-databricks in the Databricks environment
+print("Installing dbt-databricks...")
+result = subprocess.run(["pip", "install", "-q", "dbt-databricks"], capture_output=True, text=True)
+if result.returncode == 0:
+    print("✓ dbt-databricks installed\n")
+else:
+    print(f"⚠ Installation returned {result.returncode}, but continuing...\n")
+
+# Verify dbt is available
+dbt_path = shutil.which("dbt")
+if not dbt_path:
+    raise FileNotFoundError("dbt command not found after installation")
+print(f"Using dbt at: {dbt_path}\n")
 
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Run dbt build with Databricks profile
 # MAGIC
-# MAGIC Note: This uses Databricks SQL Warehouse for query execution.
-# MAGIC Run time: 5-15 minutes depending on data volume.
-
-# COMMAND ----------
-# Install dbt-databricks in the Databricks environment (if not already installed)
-print("Installing dbt-databricks...")
-subprocess.run(["pip", "install", "-q", "dbt-databricks"], check=False)
-print("✓ dbt-databricks installed\n")
+# MAGIC Compiling and materializing all silver and gold models.
+# MAGIC Run time: 30-60 minutes depending on data volume.
 
 # COMMAND ----------
 # Run dbt build
@@ -45,9 +112,10 @@ print("")
 result = subprocess.run(
     [
         "dbt", "build",
-        "--profiles-dir", "/Users/chetanya/.dbt",
-        "--vars", "{catalog: workspace, gold_schema: omop_gold}",
-        "--target", "prod"
+        "--project-dir", dbt_project_dir,
+        "--profiles-dir", profiles_dir,
+        "--target", "prod",
+        "--threads", "2"
     ],
     capture_output=False,
     text=True

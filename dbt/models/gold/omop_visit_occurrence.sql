@@ -8,7 +8,8 @@
     file_format='delta',
     incremental_strategy='merge',
     partition_by={'field': 'year_start', 'data_type': 'int'},
-    zorderby=['person_id', 'visit_start_date']
+    zorderby=['person_id', 'visit_start_date'],
+    meta={'source_resource': 'FHIR/Encounter'}
 ) }}
 
 WITH source AS (
@@ -87,6 +88,7 @@ SELECT
     _lineage_id,
     _source_file,
     _loaded_at,
+    CURRENT_TIMESTAMP() AS _transformed_at,
 
     -- Partition column
     YEAR(CAST(period_start AS DATE)) AS year_start

@@ -8,7 +8,8 @@
     unique_key='person_id',
     file_format='delta',
     incremental_strategy='merge',
-    zorderby=['person_id']
+    zorderby=['person_id'],
+    meta={'source_resource': 'FHIR/Patient'}
 ) }}
 
 WITH source AS (
@@ -77,7 +78,8 @@ SELECT
     -- Audit columns (lineage back to Bronze)
     _lineage_id,
     _source_file,
-    _loaded_at
+    _loaded_at,
+    CURRENT_TIMESTAMP() AS _transformed_at
 
 FROM source s
 LEFT JOIN gender_concepts gc

@@ -38,3 +38,19 @@ Runtime Error
 [0m00:03:35.693085 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b82360>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109bb2750>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d38680>]}
 [0m00:03:35.693223 [debug] [MainThread]: Flushing usage events
 [0m00:03:35.905354 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m19:34:16.167472 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d203e00>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10cbd8ec0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10cbd8dd0>]}
+
+
+============================== 19:34:16.170021 | 153d6b66-af72-4e09-b9cb-d16849a61982 ==============================
+[0m19:34:16.170021 [info ] [MainThread]: Running with dbt=1.11.6
+[0m19:34:16.170238 [debug] [MainThread]: running dbt with arguments {'write_json': 'True', 'profiles_dir': '/Users/chetanyapandya/.dbt', 'warn_error': 'None', 'log_path': 'logs', 'invocation_command': 'dbt list --select state:new,state:modified --profiles-dir /Users/chetanyapandya/.dbt --target prod', 'indirect_selection': 'eager', 'quiet': 'False', 'static_parser': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'printer_width': '80', 'log_format': 'default', 'use_experimental_parser': 'False', 'cache_selected_only': 'False', 'empty': 'None', 'partial_parse': 'True', 'version_check': 'True', 'no_print': 'None', 'target_path': 'None', 'send_anonymous_usage_stats': 'True', 'log_cache_events': 'False', 'debug': 'False', 'use_colors': 'True', 'introspect': 'True', 'fail_fast': 'False'}
+[0m19:34:16.170437 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/chetanyapandya/ai_projects/fhir-omop-project/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m19:34:16.170642 [debug] [MainThread]: Resource report: {"command_name": "list", "command_success": false, "command_wall_clock_time": 0.030165084, "process_in_blocks": "0", "process_kernel_time": 0.096816, "process_mem_max_rss": "109723648", "process_out_blocks": "0", "process_user_time": 0.45586}
+[0m19:34:16.170810 [debug] [MainThread]: Command `dbt list` failed at 19:34:16.170780 after 0.03 seconds
+[0m19:34:16.170916 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10cd71c40>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10cbd8ec0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d8dfe60>]}
+[0m19:34:16.171019 [debug] [MainThread]: Flushing usage events
+[0m19:34:16.381040 [debug] [MainThread]: An error was encountered while trying to flush usage events
