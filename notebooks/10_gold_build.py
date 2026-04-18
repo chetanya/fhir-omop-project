@@ -29,6 +29,12 @@ BRONZE = f"{CATALOG}.{BRONZE_SCHEMA}"
 SILVER = f"{CATALOG}.{SILVER_SCHEMA}"
 GOLD   = f"{CATALOG}.{GOLD_SCHEMA}"
 
+# FHIR timestamps use ISO 8601 with timezone offsets (e.g. +05:30 IST, -04:00 EDT).
+# Photon's strict ANSI mode rejects these in TO_TIMESTAMP — returns an error instead
+# of NULL. Disabling ANSI mode makes TO_TIMESTAMP return NULL on unparseable strings,
+# which is correct for Bronze/Silver where bad timestamps are handled downstream.
+spark.conf.set("spark.sql.ansi.enabled", "false")
+
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SILVER_SCHEMA}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{GOLD_SCHEMA}")
 
