@@ -1,0 +1,61 @@
+# dbt Databricks Profile Configuration Template
+# Copy this to ~/.dbt/profiles.yml and fill in your values
+
+fhir_omop_databricks:
+  target: prod
+  outputs:
+    prod:
+      type: databricks
+      # Databricks workspace hostname (without https://)
+      # Example: dbc-8b9c9e4e-9d6e.cloud.databricks.com
+      host: YOUR_WORKSPACE.cloud.databricks.com
+
+      # SQL endpoint path with warehouse ID
+      # CRITICAL: Must include warehouse ID in full path!
+      # Format: /sql/1.0/warehouses/{warehouse_id}
+      # If this is incomplete (just /sql/1.0), connection will timeout.
+      http_path: /sql/1.0/warehouses/YOUR_WAREHOUSE_ID
+
+      # Default schema for dbt operations
+      schema: omop_gold
+
+      # Unity Catalog name
+      catalog: workspace
+
+      # Number of parallel threads for dbt run
+      threads: 2
+
+      # Connection timeout in seconds (dbt default: 10, increase for large warehouses)
+      timeout_seconds: 3600
+
+# FINDING YOUR VALUES:
+#
+# 1. WORKSPACE HOST:
+#    - In Databricks UI, click your profile > Settings
+#    - Copy "Workspace URL" and extract hostname
+#    - Or: View source of any Databricks page, search for "hostname"
+#
+# 2. WAREHOUSE ID:
+#    - In Databricks UI, click SQL > SQL Warehouses
+#    - Click your warehouse
+#    - URL bar shows: ...warehouses/{warehouse_id}...
+#    - Or: hover over warehouse name to see ID
+#
+# 3. AUTHENTICATION:
+#    - In Databricks notebooks: uses workspace default auth (no token needed)
+#    - Locally: set DATABRICKS_TOKEN environment variable
+#    - See: https://docs.databricks.com/dev-tools/auth
+
+# DEBUGGING CONNECTION ISSUES:
+#
+# ✓ Host format check:
+#   - Should be: dbc-XXXXXXXX-XXXX.cloud.databricks.com
+#   - NOT: https://dbc-XXXXXXXX-XXXX.cloud.databricks.com (no https://)
+#
+# ✓ HTTP path check:
+#   - Should include warehouse ID: /sql/1.0/warehouses/XXXX
+#   - NOT just: /sql/1.0 (this is incomplete and causes timeouts)
+#
+# ✓ Warehouse running:
+#   - dbt cannot connect to stopped warehouses
+#   - Start warehouse before running dbt build

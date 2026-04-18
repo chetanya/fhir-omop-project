@@ -13,6 +13,16 @@
 # MAGIC - Gold tables: omop_person, omop_condition_occurrence, omop_drug_exposure, omop_visit_occurrence, omop_measurement, omop_observation
 
 # COMMAND ----------
+# MAGIC %md
+# MAGIC ## Configuration: Set your Databricks workspace values
+# MAGIC
+# MAGIC Replace these with your actual values from `~/.dbt/profiles.yml` or Databricks workspace info.
+
+# COMMAND ----------
+# EDIT THESE VALUES FOR YOUR WORKSPACE
+DATABRICKS_HOST = "dbc-8b9c9e4e-9d6e.cloud.databricks.com"  # Your workspace hostname
+DATABRICKS_WAREHOUSE_ID = "a68da0aa4e1bde22"  # Your SQL warehouse ID
+
 import subprocess
 import os
 import shutil
@@ -60,16 +70,29 @@ if not os.path.isdir(profiles_dir):
 
 # Ensure profiles.yml exists with Databricks connection config
 profiles_yml = os.path.join(profiles_dir, "profiles.yml")
+
+# Validate configuration values
+if not DATABRICKS_HOST or DATABRICKS_HOST == "YOUR_HOST.cloud.databricks.com":
+    raise ValueError("❌ DATABRICKS_HOST not configured. Edit the cell above with your workspace hostname.")
+if not DATABRICKS_WAREHOUSE_ID or DATABRICKS_WAREHOUSE_ID == "YOUR_WAREHOUSE_ID":
+    raise ValueError("❌ DATABRICKS_WAREHOUSE_ID not configured. Edit the cell above with your warehouse ID.")
+
+print(f"Using Databricks workspace: {DATABRICKS_HOST}")
+print(f"Using warehouse: {DATABRICKS_WAREHOUSE_ID}\n")
+
 if not os.path.exists(profiles_yml):
     print(f"Creating profiles.yml at {profiles_yml}")
+    # http_path must include warehouse ID: /sql/1.0/warehouses/<warehouse_id>
+    http_path = f"/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}"
+
     # Note: Databricks will use workspace default auth, no token needed in Notebooks
-    profiles_content = """fhir_omop_databricks:
+    profiles_content = f"""fhir_omop_databricks:
   target: prod
   outputs:
     prod:
       type: databricks
-      host: dbc-8b9c9e4e-9d6e.cloud.databricks.com
-      http_path: /sql/1.0
+      host: {DATABRICKS_HOST}
+      http_path: {http_path}
       schema: omop_gold
       catalog: workspace
       threads: 2
@@ -97,10 +120,45 @@ print(f"Using dbt at: {dbt_path}\n")
 
 # COMMAND ----------
 # MAGIC %md
+# MAGIC ## Validate dbt configuration (without connecting)
+# MAGIC
+# MAGIC Check dbt version and configuration paths. Full connection validation happens during dbt build.
+
+# COMMAND ----------
+# Validate dbt config without attempting connection
+# (Connection validation would hang with incomplete http_path, so we skip it here)
+print("Validating dbt configuration...")
+result = subprocess.run(
+    ["dbt", "--version"],
+    cwd=dbt_project_dir,
+    capture_output=True,
+    text=True
+)
+if result.returncode == 0:
+    print("✓ dbt version check passed:")
+    print(result.stdout)
+else:
+    print("⚠ dbt version check failed:")
+    print(result.stderr)
+
+# Show parsed profiles (does not attempt connection)
+print("dbt profile location:", profiles_yml)
+print("dbt project directory:", dbt_project_dir)
+print("\nConfiguration will be validated when dbt build runs in the next step.")
+print("If connection issues occur, check:")
+print("  1. DATABRICKS_HOST and DATABRICKS_WAREHOUSE_ID environment variables")
+print("  2. Your Databricks workspace has SQL warehouse running")
+print("  3. You have appropriate workspace permissions\n")
+
+# COMMAND ----------
+# MAGIC %md
 # MAGIC ## Run dbt build with Databricks profile
 # MAGIC
 # MAGIC Compiling and materializing all silver and gold models.
 # MAGIC Run time: 30-60 minutes depending on data volume.
+# MAGIC
+# MAGIC **Note:** Full connection validation happens here. If you encounter timeouts,
+# MAGIC verify that your warehouse ID is correct and the warehouse is running.
 
 # COMMAND ----------
 # Run dbt build
